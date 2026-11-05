@@ -2317,9 +2317,79 @@ class Sound:
 
 class ClickFilter(QObject):
     def eventFilter(self, o, e):
-        if e.type() == QEvent.MouseButtonRelease and isinstance(o, QPushButton) and o.isEnabled():
-            SND.play("click")
+        try:
+            if e.type() == QEvent.MouseButtonRelease and isinstance(o, QPushButton) and o.isEnabled():
+                SND.play("click")
+        except Exception:
+            pass
         return False
+
+
+QDEF = {
+    "lessons_any": ("📚", "Finish {n} lessons", (3, 5), 15),
+    "lessons_lang": ("", "Finish {n} {lang} lessons", (3, 5), 25),
+    "correct": ("✅", "Answer {n} questions correctly", (15, 25), 15),
+    "kills": ("⚔️", "Defeat {n} monsters in the Coding Dungeon", (6, 10), 20),
+    "project": ("🛠️", "Complete a project", (1, 1), 30),
+    "combo": ("🔥", "Reach a 5-answer combo in one lesson", (1, 1), 20),
+    "xp": ("⚡", "Earn {n} XP", (100, 150), 15),
+}
+
+
+class _NoQ:
+    def add(self, *a, **k):
+        pass
+
+    def roll(self):
+        pass
+
+    def summary(self):
+        return 0, 0
+
+
+QST = _NoQ()
+
+
+def _set_q(x):
+    global QST
+    QST = x
+
+
+class Quest:
+    def __init__(self, st):
+        self.st = st
+        self.roll()
+
+    def roll(self):
+        t, q = date.today().toordinal(), self.st.get("quests")
+        if q and q.get("date") == t:
+            return
+        r = random.Random(t)
+        langs = [l for l, p in self.st["prog"].items() if p > 0 and l in LANGS] or ["Python"]
+        lst = []
+        for k in [r.choice(["lessons_any", "lessons_lang"])] + r.sample(["correct", "kills", "project", "combo", "xp"], 2):
+            ic, tx, (a, b), gm = QDEF[k]
+            n = r.randint(a, b)
+            lang = r.choice(langs) if k == "lessons_lang" else None
+            lst.append({"kind": k, "lang": lang, "goal": n, "prog": 0, "gems": gm, "claimed": False,
+                        "text": tx.format(n=n, lang=lang or ""), "icon": LANGS[lang][0] if lang else ic})
+        self.st["quests"] = {"date": t, "list": lst, "bonus": False}
+        save(self.st)
+
+    def summary(self):
+        self.roll()
+        lst = self.st["quests"]["list"]
+        return sum(x["prog"] >= x["goal"] for x in lst), len(lst)
+
+    def add(self, kind, n=1, lang=None):
+        self.roll()
+        for qd in self.st["quests"]["list"]:
+            k = qd["kind"]
+            if (k == kind or (kind == "lessons" and k in ("lessons_any", "lessons_lang"))) and qd.get("lang") in (None, lang) and qd["prog"] < qd["goal"]:
+                qd["prog"] = min(qd["goal"], qd["prog"] + n)
+                if qd["prog"] >= qd["goal"]:
+                    SND.play("chest")
+        save(self.st)
 
 
 def strip_comments(lang, code):
@@ -2392,7 +2462,7 @@ QScrollArea{{border:none}}
 QScrollBar:vertical{{background:transparent;width:10px;margin:4px 2px}}QScrollBar::handle:vertical{{background:#2b3d46;border-radius:4px;min-height:40px}}QScrollBar::handle:vertical:hover{{background:#3b5360}}QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{{height:0}}
 #top{{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1a2830,stop:1 #22343e);border-bottom:2px solid #2b3d46}}
 #top QWidget{{background:transparent}}
-#tab{{border:2px solid transparent;border-radius:14px;padding:10px 18px;font-weight:800;color:#8ea0a8}}
+#tab{{border:2px solid transparent;border-radius:14px;padding:8px 12px;font-weight:800;color:#8ea0a8}}
 #tab:hover{{background:#22323b}}
 #tab:checked{{background:#22323b;border:2px solid #37464f;color:#fff}}
 #stats{{font-weight:800;font-size:18px;color:#ffc800}}
@@ -2858,6 +2928,8 @@ class Home(QWidget):
     extra = Signal(str, int)
     skip = Signal(str, int)
     settings = Signal()
+    dungeon = Signal()
+    quests = Signal()
     daily = Signal(str)
 
     def __init__(self, st):
@@ -2896,6 +2968,16 @@ class Home(QWidget):
         pb.setCursor(Qt.PointingHandCursor)
         pb.clicked.connect(self.projs.emit)
         tl.addWidget(pb)
+        db = QPushButton("🏰  Dungeon")
+        db.setObjectName("tab")
+        db.setCursor(Qt.PointingHandCursor)
+        db.clicked.connect(self.dungeon.emit)
+        tl.addWidget(db)
+        self.qb = QPushButton("📜  Quests")
+        self.qb.setObjectName("tab")
+        self.qb.setCursor(Qt.PointingHandCursor)
+        self.qb.clicked.connect(self.quests.emit)
+        tl.addWidget(self.qb)
         gb = QPushButton("⚙️")
         gb.setObjectName("tab")
         gb.setToolTip("Settings")
@@ -2941,6 +3023,8 @@ class Home(QWidget):
         self.hero.setStyleSheet(f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 {c},stop:1 #1f2c34);color:#fff")
         self.tip.setText(random.choice(TIPS))
         self.acb.setText(f"{self.st['avatar']}  {self.st['name'] or 'Account'}")
+        qd, qt = QST.summary()
+        self.qb.setText(f"📜  Quests {qd}/{qt}")
         dn = self.st["daily"].get(self.lang) == date.today().toordinal()
         self.dbtn.setEnabled(not dn)
         self.dbtn.setText("✅  Daily exercises complete. Come back tomorrow!" if dn else "📅  Daily exercises  ·  5 questions  ·  +25 XP")
@@ -3160,6 +3244,7 @@ class Lesson(QWidget):
             self.best = max(self.best, self.combo)
             self.bounce(self.inp if typed else self.opts[self.sel])
             SND.play("correct")
+            QST.add("correct")
             self.ft.setText(f"✓  {random.choice(PRAISE)}" + (f"   🔥 x{self.combo}" if self.combo > 1 else ""))
         else:
             self.hearts -= 1
@@ -3193,6 +3278,8 @@ class Lesson(QWidget):
                 "<div style='font-size:20px;color:#8ea0a8'>Try again, you got this.</div>")
         self.pages.setCurrentIndex(1)
         SND.play("complete" if win else "fail")
+        if win and self.best >= 5:
+            QST.add("combo")
         if win:
             self.fx.burst()
         self.fb.setProperty("state", "")
@@ -4332,6 +4419,636 @@ class Settings(QWidget):
             sl.blockSignals(False)
 
 
+MON = [("🐛", "Bug"), ("🕷️", "Spider Bug"), ("🦇", "Null Bat"), ("👻", "Ghost Process"), ("🧟", "Zombie Loop"), ("🐍", "Syntax Snake"), ("🦂", "Off-by-One Scorpion"), ("🤖", "Rogue Compiler")]
+BOSS = [("👾", "Bug King"), ("🐉", "Memory Leak Dragon"), ("💀", "Segfault Lich"), ("🦑", "Race Condition Kraken"), ("😈", "Stack Overflow Demon")]
+ROOMS = ["m", "m", "t", "m", "r", "b"]
+RICON = {"m": "⚔️", "t": "🎁", "r": "❤️", "b": "👹"}
+
+
+class DungeonView(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setMinimumHeight(250)
+        self.hero, self.cam, self.t, self.ph = "🧙", 0.0, 0.0, 0.0
+        self.mode, self.cb, self.kind, self.mon, self.name, self.boss = "idle", None, None, "", "", False
+        self.ox, self.hp, self.hpmax, self.mhp, self.mmax = 0.0, 5, 5, 1, 1
+        self.hit_t = self.hurt_t = self.lunge_t = -9.0
+        self.fl = []
+        self.tm = QTimer(self)
+        self.tm.timeout.connect(self.tick)
+
+    def showEvent(self, e):
+        self.tm.start(33)
+        super().showEvent(e)
+
+    def hideEvent(self, e):
+        self.tm.stop()
+        super().hideEvent(e)
+
+    def reset(self, hero):
+        self.hero, self.cam, self.mode, self.kind, self.fl, self.cb = hero, 0.0, "idle", None, [], None
+
+    def set_hp(self, hp, mx, mh, mm):
+        self.hp, self.hpmax, self.mhp, self.mmax = hp, mx, mh, mm
+
+    def walk(self, kind, emoji, name, boss, cb):
+        self.kind, self.mon, self.name, self.boss, self.cb = kind, emoji, name, boss, cb
+        self.ox = self.cam + self.width() + 80
+        self.mode, self.ph = "walk", 0.0
+
+    def kill(self, cb):
+        self.mode, self.ph, self.cb = "kill", 0.0, cb
+
+    def die(self, cb):
+        self.mode, self.ph, self.cb = "die", 0.0, cb
+
+    def pop(self, text, x, y, col):
+        self.fl.append([text, x, y, col, self.t])
+
+    def hit_monster(self, dmg, crit):
+        self.hit_t = self.lunge_t = self.t
+        self.pop(("CRIT -" if crit else "-") + str(dmg), self.mx(), self.fy() - 110, "#ffc800" if crit else "#ffffff")
+
+    def hit_hero(self, dmg):
+        self.hurt_t = self.t
+        self.pop(f"-{dmg}", self.hx(), self.fy() - 100, "#ff4b4b")
+
+    def hx(self):
+        d = self.t - self.lunge_t
+        return self.width() * 0.2 + (60 * math.sin(math.pi * d / 0.35) if 0 <= d < 0.35 else 0)
+
+    def mx(self):
+        return self.ox - self.cam
+
+    def fy(self):
+        return self.height() * 0.82
+
+    def _fire(self):
+        cb, self.cb = self.cb, None
+        if cb:
+            cb()
+
+    def tick(self):
+        self.t += 0.033
+        self.ph += 0.033
+        if self.mode == "walk":
+            self.cam += 8
+            if self.mx() <= self.width() * (0.66 if self.kind in ("m", "b") else 0.45):
+                self.mode, self.ph = ("alert", 0.0) if self.kind in ("m", "b") else ("idle", 0.0)
+                if self.mode == "idle":
+                    self._fire()
+        elif self.mode == "alert" and self.ph > 0.85:
+            self.mode = "idle"
+            self._fire()
+        elif self.mode == "kill" and self.ph > 0.7:
+            self.mode, self.kind = "idle", None
+            self._fire()
+        elif self.mode == "die" and self.ph > 1.0:
+            self.mode = "dead"
+            self._fire()
+        self.fl = [f for f in self.fl if self.t - f[4] < 1.0]
+        self.update()
+
+    def sprite(self, g, em, x, y, s, dy=0.0, a=1.0, rot=0.0):
+        g.setPen(Qt.NoPen)
+        g.setBrush(QColor(0, 0, 0, 90))
+        g.drawEllipse(QPointF(x, y + 4), s * 0.45, s * 0.1)
+        g.save()
+        g.setOpacity(max(0.0, min(1.0, a)))
+        g.translate(x, y - s * 0.5 - dy)
+        g.rotate(rot)
+        f = QFont()
+        f.setPixelSize(int(s))
+        g.setFont(f)
+        g.setPen(QColor("#ffffff"))
+        g.drawText(QRectF(-s, -s * 0.7, 2 * s, 1.4 * s), Qt.AlignCenter, em)
+        g.restore()
+
+    def bar(self, g, x, y, w, frac, col, label):
+        g.setPen(Qt.NoPen)
+        g.setBrush(QColor(0, 0, 0, 170))
+        g.drawRoundedRect(QRectF(x - w / 2, y, w, 10), 5, 5)
+        g.setBrush(QColor(col))
+        g.drawRoundedRect(QRectF(x - w / 2, y, max(0.0, w * frac), 10), 5, 5)
+        f = QFont()
+        f.setBold(True)
+        f.setPixelSize(12)
+        g.setFont(f)
+        g.setPen(QColor("#ffffff"))
+        g.drawText(QRectF(x - 90, y - 18, 180, 16), Qt.AlignCenter, label)
+
+    def paintEvent(self, e):
+        g = QPainter(self)
+        g.setRenderHint(QPainter.Antialiasing)
+        w, h, t = self.width(), self.height(), self.t
+        wall, fy = int(h * 0.64), self.fy()
+        d = t - self.hurt_t
+        if 0 <= d < 0.25:
+            g.translate(random.uniform(-4, 4), random.uniform(-3, 3))
+        bg = QLinearGradient(0, 0, 0, h)
+        bg.setColorAt(0, QColor("#0d1015"))
+        bg.setColorAt(1, QColor("#1b1f2a"))
+        g.fillRect(QRectF(-10, -10, w + 20, h + 20), bg)
+        g.setPen(QPen(QColor("#10131a"), 2))
+        bh, bw = 24, 56
+        for r in range(wall // bh + 1):
+            x0 = -((int(self.cam * 0.5) + (r % 2) * (bw // 2)) % bw)
+            for k, xx in enumerate(range(x0, w + bw, bw)):
+                g.setBrush(QColor("#242836" if (k + r) % 3 else "#202432"))
+                g.drawRect(xx, r * bh, bw, bh)
+        fl = QLinearGradient(0, wall, 0, h)
+        fl.setColorAt(0, QColor("#171a22"))
+        fl.setColorAt(1, QColor("#0d0f14"))
+        g.fillRect(QRectF(0, wall, w, h - wall), fl)
+        g.setPen(QPen(QColor("#0f1218"), 2))
+        for k in range(-1, w // 90 + 3):
+            xx = k * 90 - self.cam % 90
+            g.drawLine(QPointF(xx, wall), QPointF(xx - 40, h))
+        for k in range(-1, w // 260 + 3):
+            tx, ty = k * 260 + 130 - self.cam % 260, wall * 0.42
+            fk = 0.55 + 0.45 * math.sin(t * 9 + k * 1.7)
+            gl = QRadialGradient(tx, ty, 150)
+            gl.setColorAt(0, QColor(255, 170, 60, int(95 * fk)))
+            gl.setColorAt(1, QColor(255, 120, 20, 0))
+            g.setPen(Qt.NoPen)
+            g.setBrush(gl)
+            g.drawEllipse(QPointF(tx, ty), 150, 150)
+            g.setBrush(QColor("#4a3a2a"))
+            g.drawRect(QRectF(tx - 4, ty + 10, 8, 24))
+            f = QFont()
+            f.setPixelSize(int(26 + 3 * fk))
+            g.setFont(f)
+            g.setPen(QColor("#ffffff"))
+            g.drawText(QRectF(tx - 20, ty - 26, 40, 40), Qt.AlignCenter, "🔥")
+        bob = abs(math.sin(t * 11)) * 7 if self.mode == "walk" else math.sin(t * 3) * 2
+        ha, hr = 1.0, 0.0
+        if self.mode in ("die", "dead"):
+            k = min(1.0, self.ph / 0.9) if self.mode == "die" else 1.0
+            ha, hr, bob = 1 - 0.7 * k, 90 * k, 0.0
+        self.sprite(g, self.hero, self.hx(), fy, 64, bob, ha, hr)
+        if self.mode not in ("die", "dead"):
+            self.bar(g, self.hx(), fy - 64 - 30, 84, max(0, self.hp) / max(1, self.hpmax), "#ff4b4b", f"❤ {max(0, self.hp)}/{self.hpmax}")
+        if self.kind:
+            mx, size = self.mx(), (100 if self.boss else 78 if self.kind in ("m", "b") else 58)
+            a, dy, rot = 1.0, math.sin(t * 3.5) * 3, 0.0
+            if self.mode == "kill":
+                k = min(1.0, self.ph / 0.7)
+                a, dy, rot = 1 - k, k * 50, k * 50
+            dd = t - self.hit_t
+            dx = 9 * math.sin(dd * 60) * (1 - dd / 0.25) if 0 <= dd < 0.25 else 0
+            self.sprite(g, self.mon, mx + dx, fy, size, dy, a, rot)
+            if self.kind in ("m", "b") and self.mode in ("alert", "idle"):
+                self.bar(g, mx, fy - size - 30, 96, max(0, self.mhp) / max(1, self.mmax), "#a855f7", self.name)
+        if self.mode == "alert":
+            pulse = 1 + 0.15 * math.sin(self.ph * 18)
+            g.setPen(Qt.NoPen)
+            g.setBrush(QColor("#ff4b4b"))
+            g.drawEllipse(QPointF(self.hx(), fy - 140), 17 * pulse, 17 * pulse)
+            f = QFont()
+            f.setBold(True)
+            f.setPixelSize(24)
+            g.setFont(f)
+            g.setPen(QColor("#ffffff"))
+            g.drawText(QRectF(self.hx() - 20, fy - 160, 40, 40), Qt.AlignCenter, "!")
+            f.setPixelSize(20)
+            g.setFont(f)
+            g.setPen(QColor("#ffc800"))
+            g.drawText(QRectF(0, 12, w, 30), Qt.AlignCenter, ("⚠ BOSS · " if self.boss else "") + self.name + " appears!")
+        for txt, x, y, col, born in self.fl:
+            a = t - born
+            g.setOpacity(max(0.0, 1 - a))
+            f = QFont()
+            f.setBold(True)
+            f.setPixelSize(26)
+            g.setFont(f)
+            g.setPen(QColor(col))
+            g.drawText(QRectF(x - 80, y - 40 * a, 160, 30), Qt.AlignCenter, txt)
+        g.setOpacity(1.0)
+        vg = QRadialGradient(w / 2, h * 0.55, w * 0.65)
+        vg.setColorAt(0.55, QColor(0, 0, 0, 0))
+        vg.setColorAt(1, QColor(0, 0, 0, 175))
+        g.fillRect(QRectF(0, 0, w, h), vg)
+        if 0 <= d < 0.25:
+            g.fillRect(QRectF(0, 0, w, h), QColor(255, 0, 0, int(90 * (1 - d / 0.25))))
+
+
+class Dungeon(QWidget):
+    back = Signal()
+
+    def __init__(self, st):
+        super().__init__()
+        self.st, self.lang, self.run, self.q, self.checked, self.sel, self.opts = st, "Python", False, None, False, None, []
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(28, 20, 28, 0)
+        x = QPushButton("←")
+        x.setObjectName("x")
+        x.setCursor(Qt.PointingHandCursor)
+        x.clicked.connect(self.leave)
+        h = QLabel("🏰  Coding Dungeon")
+        h.setObjectName("title")
+        self.hud = QLabel()
+        self.hud.setObjectName("stats")
+        bar.addWidget(x)
+        bar.addWidget(h, 1)
+        bar.addWidget(self.hud)
+        root.addLayout(bar)
+        self.pages = FadeStack()
+        root.addWidget(self.pages, 1)
+        self.info = QLabel()
+        self.info.setTextFormat(Qt.RichText)
+        self.info.setAlignment(Qt.AlignCenter)
+        self.info.setWordWrap(True)
+        self.info.setMaximumWidth(640)
+        self.go_btn = QPushButton("ENTER THE DUNGEON")
+        self.go_btn.setObjectName("act")
+        self.go_btn.setCursor(Qt.PointingHandCursor)
+        self.go_btn.clicked.connect(self.begin)
+        p0 = QWidget()
+        v0 = QVBoxLayout(p0)
+        v0.setAlignment(Qt.AlignCenter)
+        v0.setSpacing(22)
+        v0.addWidget(self.info, 0, Qt.AlignHCenter)
+        v0.addWidget(self.go_btn, 0, Qt.AlignHCenter)
+        self.pages.addWidget(p0)
+        b = QWidget()
+        bl = QVBoxLayout(b)
+        bl.setContentsMargins(30, 14, 30, 14)
+        bl.setSpacing(10)
+        self.path = QLabel()
+        self.path.setAlignment(Qt.AlignCenter)
+        self.path.setTextFormat(Qt.RichText)
+        self.path.setStyleSheet("font-size:20px")
+        self.hpl = QLabel()
+        self.hpl.setStyleSheet("color:#ff7878;font-weight:900")
+        self.hp = QProgressBar()
+        self.hp.setTextVisible(False)
+        self.hp.setStyleSheet("QProgressBar::chunk{background:#ff4b4b}")
+        scene = QFrame()
+        scene.setObjectName("card")
+        sv = QVBoxLayout(scene)
+        self.mon = QLabel()
+        self.mon.setAlignment(Qt.AlignCenter)
+        self.mon.setStyleSheet("font-size:84px")
+        self.mn = QLabel()
+        self.mn.setAlignment(Qt.AlignCenter)
+        self.mn.setStyleSheet("font-weight:900;font-size:18px")
+        self.mhp = QProgressBar()
+        self.mhp.setTextVisible(False)
+        self.mhp.setStyleSheet("QProgressBar::chunk{background:#a855f7}")
+        for w in (self.mon, self.mn, self.mhp):
+            sv.addWidget(w)
+        self.pr = QLabel()
+        self.pr.setWordWrap(True)
+        self.pr.setStyleSheet("font-size:22px;font-weight:900")
+        self.cd = QLabel()
+        self.cd.setObjectName("code")
+        self.cd.setTextFormat(Qt.PlainText)
+        self.ol = QVBoxLayout()
+        self.ol.setSpacing(8)
+        self.inp = QLineEdit()
+        self.inp.setObjectName("inp")
+        self.inp.setPlaceholderText("Type your answer...")
+        self.inp.textChanged.connect(lambda t: self.act.setEnabled(bool(t.strip()) and not self.checked))
+        self.inp.returnPressed.connect(lambda: self.act.isEnabled() and self.go())
+        self.fb = QLabel()
+        self.fb.setWordWrap(True)
+        self.fb.setStyleSheet("font-size:17px;font-weight:800")
+        self.act = QPushButton("ATTACK ⚔️")
+        self.act.setObjectName("act")
+        self.act.setCursor(Qt.PointingHandCursor)
+        self.act.clicked.connect(self.go)
+        self.scene = scene
+        self.view = DungeonView()
+        self.qbox = QWidget()
+        ql = QVBoxLayout(self.qbox)
+        ql.setContentsMargins(0, 0, 0, 0)
+        ql.setSpacing(10)
+        for w in (self.path, self.hpl, self.hp, self.view):
+            bl.addWidget(w)
+        for w in (self.pr, self.cd):
+            ql.addWidget(w)
+        ql.addLayout(self.ol)
+        ql.addWidget(self.inp)
+        ql.addWidget(self.fb)
+        ql.addWidget(self.act, 0, Qt.AlignHCenter)
+        bl.addWidget(self.qbox)
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setWidget(center(b, 760))
+        self.pages.addWidget(sc)
+        p2 = QWidget()
+        v2 = QVBoxLayout(p2)
+        v2.setAlignment(Qt.AlignCenter)
+        v2.setSpacing(22)
+        self.evl = QLabel()
+        self.evl.setTextFormat(Qt.RichText)
+        self.evl.setAlignment(Qt.AlignCenter)
+        nb = QPushButton("CONTINUE")
+        nb.setObjectName("act")
+        nb.setCursor(Qt.PointingHandCursor)
+        nb.clicked.connect(self.nxt)
+        v2.addWidget(self.evl)
+        v2.addWidget(nb, 0, Qt.AlignHCenter)
+        self.pages.addWidget(p2)
+
+    def open(self, lang):
+        self.lang, d = lang, self.st.get("dungeon", {})
+        self.run = False
+        self.info.setText(f"<div style='font-size:64px'>🏰</div><div style='font-size:30px;font-weight:900'>Coding Dungeon</div><br>Fight bugs with your <b>{lang}</b> knowledge! Right answers hit, wrong answers hurt. A combo of 3 deals <b>double damage</b>. Rest rooms heal you, treasure rooms power you up and every floor ends with a boss.<br><br><span style='color:#ffc800'>Best floor {d.get('best', 0)} · Runs {d.get('runs', 0)} · Monsters slain {d.get('kills', 0)}</span>")
+        self.go_btn.setText("ENTER THE DUNGEON")
+        self.hud.setText("")
+        self.pages.setCurrentIndex(0)
+
+    def begin(self):
+        self.pool = [q for l in LANGS[self.lang][2] for q in l[2]]
+        self.floor, self.room, self.maxhp, self.hpv, self.coins, self.kills, self.streak, self.run = 1, 0, 5, 5, 0, 0, 0, True
+        self.view.reset(self.st.get("avatar") or "🧙")
+        self.enter()
+
+    def redraw(self):
+        self.hud.setText(f"Floor {self.floor}   🪙 {self.coins}   ⚔️ {self.kills}")
+        self.hp.setMaximum(self.maxhp)
+        self.hp.setValue(max(0, self.hpv))
+        self.hpl.setText(f"❤ {max(0, self.hpv)} / {self.maxhp}")
+        self.path.setText("  ".join("✔️" if i < self.room else f"<span style='color:#ffc800'>【{RICON[t]}】</span>" if i == self.room else RICON[t] for i, t in enumerate(ROOMS)))
+
+    def enter(self):
+        if self.room >= len(ROOMS):
+            self.floor += 1
+            self.room = 0
+            self.coins += 5
+            self.hpv = min(self.maxhp, self.hpv + 1)
+        t = ROOMS[self.room]
+        self.redraw()
+        if t in "mb":
+            self.fight(t == "b")
+        else:
+            self.room_event(t)
+
+    def room_event(self, t):
+        if t == "t":
+            if random.random() < 0.5:
+                self.coins += 3
+                e, tx = "🎁", "You open a chest and find <b>3 coins</b>!"
+            else:
+                self.maxhp += 1
+                self.hpv += 1
+                e, tx = "💖", "A heart crystal! <b>Max HP +1</b>."
+            SND.play("chest")
+        else:
+            self.hpv = min(self.maxhp, self.hpv + 2)
+            e, tx = "🏕️", "You rest by a campfire and heal <b>2 HP</b>."
+        self.redraw()
+        self.evl.setText(f"<div style='font-size:80px'>{e}</div><div style='font-size:22px'>{tx}</div>")
+        self.pages.setCurrentIndex(1)
+        self.qbox.hide()
+        self.view.set_hp(self.hpv, self.maxhp, 1, 1)
+        self.view.walk(t, "🎁" if t == "t" else "🏕️", "", False, self.show_event)
+
+    def nxt(self):
+        self.room += 1
+        self.enter()
+
+    def fight(self, boss):
+        e, nm = BOSS[(self.floor - 1) % len(BOSS)] if boss else random.choice(MON)
+        self.boss = boss
+        self.mmax = self.mhpv = (4 + self.floor) if boss else 2 + (self.floor - 1) // 2
+        self.mon.setText(e)
+        self.mn.setText(("BOSS · " if boss else "") + nm)
+        self.mhp.setMaximum(self.mmax)
+        self.mhp.setValue(self.mmax)
+        self.pages.setCurrentIndex(1)
+        self.qbox.hide()
+        self.view.set_hp(self.hpv, self.maxhp, self.mmax, self.mmax)
+        self.view.walk("b" if boss else "m", e, nm, boss, self.arrived)
+
+    def arrived(self):
+        if self.run:
+            self.qbox.show()
+            self.ask()
+
+    def after_kill(self):
+        if self.run:
+            self.room += 1
+            self.enter()
+
+    def show_event(self):
+        if self.run:
+            self.pages.setCurrentIndex(2)
+
+    def repol(self):
+        for w in self.opts:
+            w.style().unpolish(w)
+            w.style().polish(w)
+
+    def ask(self):
+        p, c, o, a = random.choice(self.pool)
+        if o:
+            k = random.sample(range(len(o)), len(o))
+            o, a = [o[x] for x in k], k.index(a)
+        self.q = (p, c, o, a)
+        while self.ol.count():
+            self.ol.takeAt(0).widget().deleteLater()
+        self.opts, self.sel, self.checked = [], None, False
+        for i, t in enumerate(o or []):
+            b = QPushButton(f"{i + 1}    {t}")
+            b.setObjectName("opt")
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _, i=i: self.pick(i))
+            self.ol.addWidget(b)
+            self.opts.append(b)
+        self.pr.setText(p)
+        self.cd.setText(c)
+        self.cd.setVisible(bool(c))
+        self.inp.setVisible(o is None)
+        self.inp.setEnabled(True)
+        self.inp.clear()
+        self.fb.setText("")
+        self.act.setText("ATTACK ⚔️")
+        self.act.setEnabled(False)
+
+    def pick(self, i):
+        if self.checked:
+            return
+        for j, b in enumerate(self.opts):
+            b.setChecked(j == i)
+        self.sel = i
+        self.act.setEnabled(True)
+
+    def check(self):
+        p, c, o, a = self.q
+        typed = o is None
+        ok = ("".join(self.inp.text().split()) in ["".join(x.split()) for x in a]) if typed else self.sel == a
+        self.checked = True
+        self.inp.setEnabled(False)
+        for j, b in enumerate(self.opts):
+            b.setEnabled(False)
+            if j == a:
+                b.setProperty("state", "good")
+            elif j == self.sel:
+                b.setProperty("state", "bad")
+        if ok:
+            self.streak += 1
+            dmg = 2 if self.streak >= 3 else 1
+            self.mhpv = max(0, self.mhpv - dmg)
+            msg = f"✅ {'🔥 CRIT! ' if dmg == 2 else ''}You hit for {dmg}."
+            SND.play("correct")
+            QST.add("correct")
+            self.view.hit_monster(dmg, dmg == 2)
+        else:
+            self.streak = 0
+            dmg = 2 if self.boss else 1
+            self.hpv -= dmg
+            msg = f"❌ Ouch! It hits you for {dmg}. Answer: {a[0] if typed else o[a]}"
+            SND.play("wrong")
+            wiggle(self.hp)
+            self.view.hit_hero(dmg)
+        if self.mhpv <= 0:
+            msg += "\n💥 Defeated!"
+        elif self.hpv <= 0:
+            msg += "\n💀 You fall..."
+        self.fb.setText(msg)
+        self.mhp.setValue(self.mhpv)
+        self.view.set_hp(self.hpv, self.maxhp, self.mhpv, self.mmax)
+        self.act.setText("CONTINUE")
+        self.redraw()
+        self.repol()
+
+    def go(self):
+        if not self.checked:
+            self.check()
+        elif self.hpv <= 0:
+            self.qbox.hide()
+            self.view.die(self.finish)
+        elif self.mhpv <= 0:
+            self.kills += 1
+            self.coins += 3 if self.boss else 1
+            QST.add("kills")
+            if self.boss:
+                SND.play("complete")
+                self.fx.burst()
+            self.qbox.hide()
+            self.view.kill(self.after_kill)
+        else:
+            self.ask()
+
+    def finish(self):
+        if not self.run:
+            return
+        self.run = False
+        cleared = self.floor - 1
+        gems, xp, chest = min(self.coins + cleared * 5, 80), min(self.kills * 5 + cleared * 10, 200), 1 if cleared >= 3 else 0
+        st = self.st
+        st["gems"] += gems
+        st["xp"] += xp
+        st["chests"] += chest
+        d = st.setdefault("dungeon", {"best": 0, "runs": 0, "kills": 0})
+        d["best"], d["runs"], d["kills"] = max(d["best"], self.floor), d["runs"] + 1, d["kills"] + self.kills
+        save(st)
+        dead = self.hpv <= 0
+        self.info.setText(f"<div style='font-size:64px'>{'💀' if dead else '🚪'}</div><div style='font-size:28px;font-weight:900'>{'You were defeated' if dead else 'You left the dungeon'}</div><br>Floor reached <b>{self.floor}</b> · Monsters slain <b>{self.kills}</b><br><br><span style='color:#ffc800'>💎 +{gems} gems · ⚡ +{xp} XP{' · 🎁 +1 chest' if chest else ''}</span>")
+        self.go_btn.setText("TRY AGAIN")
+        self.pages.setCurrentIndex(0)
+        if dead:
+            SND.play("fail")
+
+    def leave(self):
+        if self.run:
+            self.finish()
+        self.back.emit()
+
+
+class QuestPage(QWidget):
+    back = Signal()
+
+    def __init__(self, st):
+        super().__init__()
+        self.st = st
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(28, 20, 28, 0)
+        x = QPushButton("←")
+        x.setObjectName("x")
+        x.setCursor(Qt.PointingHandCursor)
+        x.clicked.connect(self.back.emit)
+        h = QLabel("📜  Daily Quests")
+        h.setObjectName("title")
+        bar.addWidget(x)
+        bar.addWidget(h, 1)
+        root.addLayout(bar)
+        self.body = QWidget()
+        self.col = QVBoxLayout(self.body)
+        self.col.setSpacing(12)
+        self.col.setContentsMargins(30, 16, 30, 30)
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setWidget(center(self.body, 760))
+        root.addWidget(sc, 1)
+
+    def claim(self, qd):
+        qd["claimed"] = True
+        self.st["gems"] += qd["gems"]
+        SND.play("chest")
+        q = self.st["quests"]
+        if all(x["claimed"] for x in q["list"]) and not q["bonus"]:
+            q["bonus"] = True
+            self.st["chests"] += 1
+            SND.play("complete")
+        save(self.st)
+        self.refresh()
+
+    def refresh(self):
+        QST.roll()
+        q = self.st["quests"]
+        while self.col.count():
+            w = self.col.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        sub = QLabel("New quests every day. Finish them, claim your rewards, and claim all three for a bonus 🎁 chest!")
+        sub.setWordWrap(True)
+        sub.setStyleSheet("color:#8ea0a8")
+        self.col.addWidget(sub)
+        for qd in q["list"]:
+            done = qd["prog"] >= qd["goal"]
+            c = QFrame()
+            c.setObjectName("card")
+            hl = QHBoxLayout(c)
+            hl.setContentsMargins(18, 14, 18, 14)
+            em = QLabel("✅" if qd["claimed"] else qd["icon"])
+            em.setStyleSheet("font-size:36px")
+            v = QVBoxLayout()
+            t = QLabel(f"<b style='font-size:17px'>{qd['text']}</b>")
+            t.setTextFormat(Qt.RichText)
+            pb = QProgressBar()
+            pb.setTextVisible(False)
+            pb.setMaximum(qd["goal"])
+            pb.setValue(qd["prog"])
+            pb.setStyleSheet("QProgressBar::chunk{background:#ffc800}")
+            sm = QLabel(f"{qd['prog']}/{qd['goal']}   ·   💎 {qd['gems']}")
+            sm.setStyleSheet("color:#ffc800")
+            v.addWidget(t)
+            v.addWidget(pb)
+            v.addWidget(sm)
+            b = QPushButton("CLAIMED" if qd["claimed"] else "CLAIM" if done else "IN PROGRESS")
+            b.setObjectName("act")
+            b.setEnabled(done and not qd["claimed"])
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet("padding:10px 18px")
+            b.clicked.connect(lambda _, qd=qd: self.claim(qd))
+            hl.addWidget(em)
+            hl.addLayout(v, 1)
+            hl.addWidget(b)
+            self.col.addWidget(c)
+        bn = QLabel("🎁  Bonus chest: " + ("collected!" if q["bonus"] else "claim all 3 quests"))
+        bn.setStyleSheet("font-weight:800;color:#a855f7;margin-top:8px")
+        self.col.addWidget(bn)
+        self.col.addStretch()
+
+
 class Welcome(QWidget):
     named = Signal(str)
 
@@ -4614,9 +5331,10 @@ class Win(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Codingo")
-        self.resize(1200, 780)
+        self.resize(1340, 780)
         self.st = load()
         _set_snd(Sound(self.st))
+        _set_q(Quest(self.st))
         SND.prepare()
         QTimer.singleShot(600, SND.apply)
         self.stack = FadeStack()
@@ -4660,6 +5378,15 @@ class Win(QMainWindow):
         self.stack.addWidget(self.settings)
         self.settings.back.connect(lambda: self.stack.setCurrentIndex(0))
         self.home.settings.connect(self.show_settings)
+        self.dng = Dungeon(self.st)
+        self.dng.fx = self.conf
+        self.stack.addWidget(self.dng)
+        self.dng.back.connect(lambda: (self.home.refresh(), self.stack.setCurrentIndex(0)))
+        self.qp = QuestPage(self.st)
+        self.stack.addWidget(self.qp)
+        self.qp.back.connect(lambda: (self.home.refresh(), self.stack.setCurrentIndex(0)))
+        self.home.dungeon.connect(self.show_dungeon)
+        self.home.quests.connect(self.show_quests)
         self.home.extra.connect(self.go_extra)
         self.home.skip.connect(self.go_skip)
         self.home.refresh()
@@ -4694,6 +5421,14 @@ class Win(QMainWindow):
         self.cur = (lang, -300 - i)
         self.les.begin(lang, 0, random.sample(pool, min(4, len(pool))), True, ("✏️", "Extra Practice", "Four quick review questions from what you've learned so far. First time reward: <b>💎 8</b>.", 5))
         self.stack.setCurrentIndex(1)
+
+    def show_dungeon(self):
+        self.dng.open(self.home.lang)
+        self.stack.setCurrentIndex(10)
+
+    def show_quests(self):
+        self.qp.refresh()
+        self.stack.setCurrentIndex(11)
 
     def show_settings(self):
         self.settings.refresh()
@@ -4813,6 +5548,12 @@ class Win(QMainWindow):
             st["gems"] += 15 if kd == "p" else 0 if i <= -200 else self.les.gems
             if kd in ("p", "b"):
                 st["chests"] += 1
+            if kd == "l":
+                QST.add("lessons", 1, lang)
+            if kd == "p" or -300 < i <= -200:
+                QST.add("project")
+            if i > -300:
+                QST.add("xp", max(0, xp))
             if i <= -500:
                 bi = -500 - i
                 d = st["big"][lang][str(bi)]
