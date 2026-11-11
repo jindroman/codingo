@@ -124,7 +124,6 @@ for _n in LANGS:
 
 TRUNK = [("l", 13), ("l", 14), ("l", 15), ("l", 0), ("l", 5), ("l", 9), ("l", 6), ("p", 0), ("l", 7), ("l", 1), ("l", 10), ("p", 1),
          ("l", 2), ("l", 12), ("l", 3), ("l", 11), ("l", 4), ("l", 8), ("p", 2)]
-TOTAL = len(TRUNK) + 4
 BR = {
     "Python": [("Data", "📊", [("l", 16), ("l", 17)]), ("Automation", "🤖", [("l", 18), ("l", 19)])],
     "C": [("Systems", "🖥️", [("l", 16), ("l", 17)]), ("Embedded", "🔌", [("l", 18), ("l", 19)])],
@@ -567,10 +566,6 @@ BR.update({
 
 def total(lang):
     return len(TRUNKS[lang]) + 2 + len(BR[lang][0][2]) + len(EXTN.get(lang, [])) + 1 + len(BR2[lang][0][2]) + len(POST.get(lang, []))
-
-
-def _body(b1, b2):
-    return b1, b2
 
 
 STARTER.update({
@@ -1144,7 +1139,7 @@ TIER = {"easy": ("🟢 Easy", "#58cc02"), "medium": ("🟡 Medium", "#f59e0b"), 
 
 
 def skeleton(lang, todo):
-    ln = ("# " if lang in ("Python", "Ruby", "R", "Julia", "Elixir") else "-- " if lang == "Lua" else "// ") + todo
+    ln = (CCOM[lang] + " " if lang in CCOM else "# " if lang in ("Python", "Ruby", "R", "Julia", "Elixir") else "-- " if lang == "Lua" else "// ") + todo
     w = {"C": "#include <stdio.h>\n\nint main(void) {\n    %s\n    return 0;\n}\n",
          "C++": "#include <iostream>\n#include <string>\n\nint main() {\n    %s\n    return 0;\n}\n",
          "Java": "public class Main {\n    public static void main(String[] args) {\n        %s\n    }\n}\n",
@@ -2392,7 +2387,52 @@ class Quest:
         save(self.st)
 
 
+CCOM = {}
+COLORS = [("Red", "#ef4444"), ("Orange", "#f59e0b"), ("Green", "#58cc02"), ("Teal", "#14b8a6"), ("Blue", "#3b82f6"), ("Purple", "#a855f7"), ("Pink", "#fb7185")]
+CKEYS = ("prog", "field", "field2", "chal", "extra", "pdone", "big", "weak", "daily")
+
+
+def fmt(t):
+    t = t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", t).replace("\n", "<br>")
+
+
+def register_custom(name, d):
+    n = len(d["lessons"])
+    base = list(SH) + list(SH2)
+    LANGS[name] = (d["icon"], d["color"], [(x["title"], x.get("emoji") or "📘", [tuple(q) for q in x["qs"]]) for x in d["lessons"]] + [b[:3] for b in base])
+    TEACH[name] = [(fmt(x.get("text", "")), x.get("code", "")) for x in d["lessons"]] + [b[3:] for b in base]
+    TRUNKS[name] = [("l", i) for i in range(n + 4)]
+    BR[name] = [("Algorithms", "🧮", [("l", n + 4)]), ("Web & Data", "🌐", [("l", n + 6)])]
+    BR2[name] = [("Testing", "🧪", [("l", n + 8)]), ("Patterns", "🧱", [("l", n + 9)])]
+    EXTN[name] = []
+    POST[name] = [("b", 1)]
+    UN[name] = [(0, "Unit 1", "Your Course"), (n, "Bonus", "CS Concepts"), ("f", "Crossroads", "Choose Your Field"), ("e", "Boss", "Boss 1"),
+                ("f2", "Crossroads", "Specialization"), ("z", "Part 3", "Boss 2")]
+    PRINT[name] = r"\b" + re.escape(d.get("print") or "print") + r"\b"
+    CCOM[name] = d.get("comment") or "//"
+
+
+def unregister_custom(name):
+    for dct in (LANGS, TEACH, TRUNKS, BR, BR2, EXTN, POST, UN, PRINT, CCOM):
+        dct.pop(name, None)
+
+
+EXAMPLE = {"icon": "👽", "color": "#a855f7", "comment": "#", "print": "zorp", "lessons": [
+    {"title": "Hello, Zorp!", "emoji": "👋", "text": "Zorp is an **alien language**. To print something you use the word zorp followed by text in quotes.\n\nEvery line is one command.",
+     "code": "zorp \"Hello, Earth!\"", "qs": [
+         ["Which word prints text in Zorp?", "", ["zorp", "print", "echo", "say"], 0],
+         ["What does this print?", "zorp \"Hi\"", ["Hi", "zorp", "\"Hi\"", "nothing"], 0],
+         ["Type the word that prints in Zorp", "___ \"Hi\"", None, ["zorp"]]]},
+    {"title": "Zorp Variables", "emoji": "📦", "text": "A variable stores a value. In Zorp you write **let name = value**.",
+     "code": "let age = 10\nzorp age", "qs": [
+         ["Which keyword creates a variable?", "", ["let", "var", "int", "make"], 0],
+         ["Type the keyword that creates a Zorp variable", "___ x = 5", None, ["let"]]]}]}
+
+
 def strip_comments(lang, code):
+    if lang in CCOM:
+        return re.sub(re.escape(CCOM[lang]) + r".*", "", code)
     if lang == "Lua":
         return re.sub(r"--.*", "", code)
     if lang in ("Python", "Ruby", "R", "Julia", "Elixir"):
@@ -2521,20 +2561,75 @@ def center(w, mw=720):
 
 
 def load():
-    st = {"xp": 0, "streak": 0, "last": 0, "done": {}, "prog": {}, "name": "", "lessons": 0, "perfect": 0, "combo": 0, "dailies": 0, "daily": {}, "field": {}, "gems": 0, "chests": 0, "avatar": "🤖", "owned": ["🤖"], "chal": {}, "key": "", "pdone": {}, "extra": {}, "big": {}, "field2": {}}
-    try:
-        with open(SAVE) as f:
-            st.update(json.load(f))
-    except Exception:
-        pass
+    st = {"xp": 0, "streak": 0, "last": 0, "prog": {}, "name": "", "lessons": 0, "perfect": 0, "combo": 0, "dailies": 0, "daily": {}, "field": {}, "gems": 0, "chests": 0, "avatar": "🤖", "owned": ["🤖"], "chal": {}, "pdone": {}, "extra": {}, "big": {}, "field2": {}, "custom": {}}
+    for p in (SAVE, SAVE + ".bak"):
+        try:
+            with open(p) as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                st.update(d)
+                break
+        except Exception:
+            continue
     return st
 
 
-def save(st):
+_SV = {"st": None, "on": False}
+
+
+def _write(st):
     try:
-        with open(SAVE, "w") as f:
+        tmp = SAVE + ".tmp"
+        with open(tmp, "w") as f:
             json.dump(st, f)
+        if os.path.exists(SAVE):
+            try:
+                os.replace(SAVE, SAVE + ".bak")
+            except OSError:
+                pass
+        os.replace(tmp, SAVE)
     except Exception:
+        pass
+
+
+def flush():
+    _SV["on"] = False
+    st, _SV["st"] = _SV["st"], None
+    if st is not None:
+        _write(st)
+
+
+def save(st):
+    _SV["st"] = st
+    if not _SV["on"]:
+        _SV["on"] = True
+        QTimer.singleShot(500, flush)
+
+
+def _log_exc(*a):
+    import traceback
+    try:
+        with open(os.path.join(os.path.expanduser("~"), ".codingo_error.log"), "a") as f:
+            f.write(("".join(traceback.format_exception(*a)) if a else traceback.format_exc()) + "\n")
+    except Exception:
+        pass
+
+
+def _hook(t, v, tb):
+    _log_exc(t, v, tb)
+    sys.__excepthook__(t, v, tb)
+
+
+class SafePaint:
+    def paintEvent(self, e):
+        try:
+            self._paint(e)
+        except Exception:
+            _log_exc()
+
+
+class _NoFx:
+    def burst(self):
         pass
 
 
@@ -2545,7 +2640,7 @@ UNITS = [(0, "Unit 1", "Foundations"), (8, "Unit 2", "Logic & Loops"), (12, "Uni
          ("f", "Crossroads", "Choose Your Field"), ("e", "Boss", "Boss 1")]
 
 
-class Roadmap(QWidget):
+class Roadmap(SafePaint, QWidget):
     pick = Signal(int)
     chal = Signal(int)
     extra = Signal(int)
@@ -2564,7 +2659,6 @@ class Roadmap(QWidget):
         self.setMinimumHeight(int(self.items()[-1][1] + 140))
         self.t = QTimer(self)
         self.t.timeout.connect(self.tick)
-        self.t.start(33)
 
     def set(self, lang, c, d, field, cdone=(), xdone=(), field2=None):
         self.field2 = field2
@@ -2577,7 +2671,12 @@ class Roadmap(QWidget):
 
     def showEvent(self, e):
         self.t0 = self.ph
+        self.t.start(33)
         super().showEvent(e)
+
+    def hideEvent(self, e):
+        self.t.stop()
+        super().hideEvent(e)
 
     def uidx(self, key):
         T, LN = len(TRUNKS[self.lang]), len(BR[self.lang][0][2])
@@ -2586,6 +2685,12 @@ class Roadmap(QWidget):
         return key if isinstance(key, int) else {"f": T, "e": Bi, "x": Bi + 1, "f2": Bi + 1 + E, "z": Bi + 2 + E + 2 * LN2}[key]
 
     def items(self):
+        k = (self.width(), self.lang, self.field, self.field2)
+        if getattr(self, "_ik", None) != k:
+            self._ik, self._iv = k, self._items()
+        return self._iv
+
+    def _items(self):
         TR = TRUNKS[self.lang]
         w, T, LN = self.width(), len(TR), len(BR[self.lang][0][2])
         EX, LN2, PO = EXTN.get(self.lang, []), len(BR2[self.lang][0][2]), POST.get(self.lang, [])
@@ -2714,7 +2819,7 @@ class Roadmap(QWidget):
             pts = [QPointF(x + (r - 4) * (1 if n % 2 == 0 else 0.84) * math.cos(n * math.pi / 8), y + (r - 4) * (1 if n % 2 == 0 else 0.84) * math.sin(n * math.pi / 8)) for n in range(16)]
         g.drawPolygon(QPolygonF(pts))
 
-    def paintEvent(self, e):
+    def _paint(self, e):
         g = QPainter(self)
         g.setRenderHint(QPainter.Antialiasing)
         w, h, d, T, LN = self.width(), self.height(), self.d, len(TRUNKS[self.lang]), len(BR[self.lang][0][2])
@@ -3039,6 +3144,7 @@ class Home(QWidget):
 class Lesson(QWidget):
     done = Signal(bool, int)
     ask = Signal(str, str)
+    fx = _NoFx()
 
     def __init__(self):
         super().__init__()
@@ -3350,6 +3456,7 @@ class Lesson(QWidget):
 
 class Project(QWidget):
     done = Signal(bool, int)
+    fx = _NoFx()
 
     def __init__(self):
         super().__init__()
@@ -3477,6 +3584,7 @@ def wiggle(w):
 
 class Shop(QWidget):
     back = Signal()
+    fx = _NoFx()
 
     def __init__(self, st):
         super().__init__()
@@ -4425,7 +4533,7 @@ ROOMS = ["m", "m", "t", "m", "r", "b"]
 RICON = {"m": "⚔️", "t": "🎁", "r": "❤️", "b": "👹"}
 
 
-class DungeonView(QWidget):
+class DungeonView(SafePaint, QWidget):
     def __init__(self):
         super().__init__()
         self.setMinimumHeight(250)
@@ -4537,7 +4645,7 @@ class DungeonView(QWidget):
         g.setPen(QColor("#ffffff"))
         g.drawText(QRectF(x - 90, y - 18, 180, 16), Qt.AlignCenter, label)
 
-    def paintEvent(self, e):
+    def _paint(self, e):
         g = QPainter(self)
         g.setRenderHint(QPainter.Antialiasing)
         w, h, t = self.width(), self.height(), self.t
@@ -4634,6 +4742,7 @@ class DungeonView(QWidget):
 
 class Dungeon(QWidget):
     back = Signal()
+    fx = _NoFx()
 
     def __init__(self, st):
         super().__init__()
@@ -5254,7 +5363,7 @@ class FadeStack(QStackedWidget):
         a.start(QAbstractAnimation.DeleteWhenStopped)
 
 
-class Confetti(QWidget):
+class Confetti(SafePaint, QWidget):
     def __init__(self, parent):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -5283,7 +5392,7 @@ class Confetti(QWidget):
             self.t.stop()
             self.hide()
 
-    def paintEvent(self, e):
+    def _paint(self, e):
         g = QPainter(self)
         g.setRenderHint(QPainter.Antialiasing)
         g.setPen(Qt.NoPen)
@@ -5306,25 +5415,382 @@ class Picker(QWidget):
     def __init__(self):
         super().__init__()
         v = QVBoxLayout(self)
-        v.setAlignment(Qt.AlignCenter)
-        v.setSpacing(28)
+        v.setContentsMargins(0, 24, 0, 0)
         t = QLabel("What do you want to learn?")
         t.setObjectName("title")
         t.setAlignment(Qt.AlignCenter)
         v.addWidget(t)
-        row = QGridLayout()
-        row.setSpacing(20)
-        row.setAlignment(Qt.AlignCenter)
-        for k, (n, (ic, c, _)) in enumerate(LANGS.items()):
-            b = QPushButton(f"{ic}\n{n}")
+        self.body = QWidget()
+        self.grid = QGridLayout(self.body)
+        self.grid.setSpacing(20)
+        self.grid.setContentsMargins(30, 20, 30, 30)
+        self.grid.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setWidget(self.body)
+        v.addWidget(sc, 1)
+        self.rebuild()
+
+    def rebuild(self):
+        while self.grid.count():
+            w = self.grid.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        items = [(n, ic, c, n) for n, (ic, c, _) in LANGS.items()] + [("__new__", "＋", "#a855f7", "Make your own")]
+        for k, (n, ic, c, lb) in enumerate(items):
+            b = QPushButton(f"{ic}\n{lb}")
             b.setFixedSize(190, 150)
             b.setCursor(Qt.PointingHandCursor)
             b.setStyleSheet(
-                f"QPushButton{{background:#1a2830;border:2px solid #2b3d46;border-bottom:7px solid {c};border-radius:22px;font-size:28px;font-weight:900}}"
+                f"QPushButton{{background:#1a2830;border:2px {'dashed' if n == '__new__' else 'solid'} #2b3d46;border-bottom:7px solid {c};border-radius:22px;font-size:26px;font-weight:900}}"
                 f"QPushButton:hover{{background:#22323b;border-color:{c}}}")
             b.clicked.connect(lambda _, n=n: self.chose.emit(n))
-            row.addWidget(b, k // 4, k % 4)
+            self.grid.addWidget(b, k // 4, k % 4)
+
+
+class QuestionDialog(QDialog):
+    def __init__(self, parent=None, q=None):
+        super().__init__(parent)
+        self.setWindowTitle("Question")
+        self.setMinimumWidth(540)
+        v = QVBoxLayout(self)
+        self.pr = QLineEdit()
+        self.pr.setPlaceholderText("Question, e.g. What does zorp \"Hi\" print?")
+        self.cd = QPlainTextEdit()
+        self.cd.setFixedHeight(70)
+        self.cd.setPlaceholderText("Code shown with the question (optional)")
+        self.kind = QComboBox()
+        self.kind.addItems(["Multiple choice", "Typed answer"])
+        self.opts = [QLineEdit() for _ in range(4)]
+        for i, o in enumerate(self.opts):
+            o.setPlaceholderText("✔ Correct answer" if i == 0 else f"Wrong answer {i}" + (" (optional)" if i > 1 else ""))
+        self.ans = QLineEdit()
+        self.ans.setPlaceholderText("Accepted answers separated by commas, e.g. zorp, Zorp")
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        for w in [self.pr, self.cd, self.kind] + self.opts + [self.ans, bb]:
+            v.addWidget(w)
+        self.kind.currentIndexChanged.connect(self.sw)
+        if q:
+            self.pr.setText(q[0])
+            self.cd.setPlainText(q[1] or "")
+            if q[2]:
+                for o, t in zip(self.opts, q[2]):
+                    o.setText(t)
+            else:
+                self.kind.setCurrentIndex(1)
+                self.ans.setText(", ".join(q[3]))
+        self.sw()
+
+    def sw(self):
+        mc = self.kind.currentIndex() == 0
+        for o in self.opts:
+            o.setVisible(mc)
+        self.ans.setVisible(not mc)
+
+    def data(self):
+        if self.kind.currentIndex() == 0:
+            o = [x.text().strip() for x in self.opts]
+            return [self.pr.text().strip(), self.cd.toPlainText().rstrip(), [o[0]] + [x for x in o[1:] if x], 0]
+        return [self.pr.text().strip(), self.cd.toPlainText().rstrip(), None, [a.strip() for a in self.ans.text().split(",") if a.strip()]]
+
+    def accept(self):
+        d = self.data()
+        if not d[0]:
+            err = "Write the question."
+        elif d[2] is not None and (not d[2][0] or len(d[2]) < 2 or len({x.lower() for x in d[2]}) != len(d[2])):
+            err = "Multiple choice needs a correct answer and at least one different wrong answer."
+        elif d[2] is None and not d[3]:
+            err = "Add at least one accepted answer."
+        else:
+            return super().accept()
+        QMessageBox.warning(self, "Question", err)
+
+
+class LessonDialog(QDialog):
+    def __init__(self, parent=None, d=None):
+        super().__init__(parent)
+        self.setWindowTitle("Lesson")
+        self.setMinimumWidth(620)
+        v = QVBoxLayout(self)
+        self.ti = QLineEdit()
+        self.ti.setPlaceholderText("Lesson title")
+        self.em = QLineEdit()
+        self.em.setPlaceholderText("Emoji (optional)")
+        self.em.setMaximumWidth(170)
+        self.tx = QPlainTextEdit()
+        self.tx.setMinimumHeight(110)
+        self.tx.setPlaceholderText("Explain the idea. **bold** works. A blank line starts a new paragraph.")
+        self.cd = QPlainTextEdit()
+        self.cd.setFixedHeight(90)
+        self.cd.setPlaceholderText("Example code (optional)")
+        self.ql = QListWidget()
+        self.ql.setMinimumHeight(120)
+        row = QHBoxLayout()
+        for lb, fn in (("＋ Add question", self.q_add), ("✎ Edit", self.q_edit), ("✕ Remove", self.q_rem)):
+            b = QPushButton(lb)
+            b.setObjectName("tab")
+            b.clicked.connect(fn)
+            row.addWidget(b)
+        row.addStretch()
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        for w in (self.ti, self.em, self.tx, self.cd, QLabel("Questions (each lesson needs at least one):"), self.ql):
+            v.addWidget(w)
         v.addLayout(row)
+        v.addWidget(bb)
+        self.qs = [list(q) for q in d["qs"]] if d else []
+        if d:
+            self.ti.setText(d["title"])
+            self.em.setText(d.get("emoji", ""))
+            self.tx.setPlainText(d.get("text", ""))
+            self.cd.setPlainText(d.get("code", ""))
+        self.q_show()
+
+    def q_show(self):
+        self.ql.clear()
+        self.ql.addItems([f"{'Choice' if q[2] else 'Typed'}: {q[0][:70]}" for q in self.qs])
+
+    def q_add(self):
+        dlg = QuestionDialog(self)
+        if dlg.exec():
+            self.qs.append(dlg.data())
+            self.q_show()
+
+    def q_edit(self):
+        r = self.ql.currentRow()
+        if r >= 0:
+            dlg = QuestionDialog(self, self.qs[r])
+            if dlg.exec():
+                self.qs[r] = dlg.data()
+                self.q_show()
+
+    def q_rem(self):
+        r = self.ql.currentRow()
+        if r >= 0:
+            del self.qs[r]
+            self.q_show()
+
+    def accept(self):
+        if not self.ti.text().strip() or not self.qs:
+            QMessageBox.warning(self, "Lesson", "A lesson needs a title and at least one question.")
+        else:
+            super().accept()
+
+    def data(self):
+        return {"title": self.ti.text().strip(), "emoji": self.em.text().strip(), "text": self.tx.toPlainText().strip(), "code": self.cd.toPlainText().rstrip(), "qs": self.qs}
+
+
+class Creator(QWidget):
+    back = Signal()
+    saved = Signal()
+
+    def __init__(self, st):
+        super().__init__()
+        self.st, self.orig, self.lessons = st, None, []
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(28, 20, 28, 0)
+        x = QPushButton("←")
+        x.setObjectName("x")
+        x.setCursor(Qt.PointingHandCursor)
+        x.clicked.connect(self.up)
+        h = QLabel("🧪  Make Your Own Language")
+        h.setObjectName("title")
+        bar.addWidget(x)
+        bar.addWidget(h, 1)
+        root.addLayout(bar)
+        self.pg = QStackedWidget()
+        root.addWidget(self.pg, 1)
+        self.lbody = QWidget()
+        self.lcol = QVBoxLayout(self.lbody)
+        self.lcol.setSpacing(12)
+        self.lcol.setContentsMargins(30, 16, 30, 30)
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setWidget(center(self.lbody, 760))
+        self.pg.addWidget(sc)
+        eb = QWidget()
+        ev = QVBoxLayout(eb)
+        ev.setContentsMargins(30, 16, 30, 20)
+        ev.setSpacing(10)
+        self.nm = QLineEdit()
+        self.nm.setPlaceholderText("Language name (max 18 characters)")
+        self.nm.setMaxLength(18)
+        self.ic = QLineEdit()
+        self.ic.setPlaceholderText("Icon emoji, e.g. 👽")
+        self.ic.setMaximumWidth(220)
+        self.co = QComboBox()
+        self.co.addItems([n for n, _ in COLORS])
+        self.cm = QComboBox()
+        self.cm.addItems(["# comments", "// comments", "-- comments"])
+        self.pk = QLineEdit()
+        self.pk.setPlaceholderText("Print keyword used by project checks, e.g. zorp (default: print)")
+        self.ll = QListWidget()
+        self.ll.setMinimumHeight(150)
+        for w in (self.nm, self.ic, self.co, self.cm, self.pk, QLabel("Lessons (they appear on the roadmap in this order):"), self.ll):
+            ev.addWidget(w)
+        row = QHBoxLayout()
+        for lb, fn in (("＋ Add lesson", self.e_add), ("✎ Edit", self.e_edit), ("✕ Remove", self.e_rem), ("▲", lambda: self.e_move(-1)), ("▼", lambda: self.e_move(1))):
+            b = QPushButton(lb)
+            b.setObjectName("tab")
+            b.clicked.connect(fn)
+            row.addWidget(b)
+        row.addStretch()
+        ev.addLayout(row)
+        sv = QPushButton("SAVE LANGUAGE")
+        sv.setObjectName("act")
+        sv.setCursor(Qt.PointingHandCursor)
+        sv.clicked.connect(self.e_save)
+        ev.addWidget(sv, 0, Qt.AlignHCenter)
+        ev.addStretch()
+        sc2 = QScrollArea()
+        sc2.setWidgetResizable(True)
+        sc2.setWidget(center(eb, 760))
+        self.pg.addWidget(sc2)
+
+    def up(self):
+        if self.pg.currentIndex() == 1:
+            self.pg.setCurrentIndex(0)
+        else:
+            self.back.emit()
+
+    def refresh(self):
+        while self.lcol.count():
+            w = self.lcol.takeAt(0).widget()
+            if w:
+                w.deleteLater()
+        t = QLabel("Create your own language or course: pick a name and icon, write lessons with an explanation, an example and questions, and it appears on the language picker with a full roadmap, bosses, forks and Byte quizzes. Your languages are saved with your progress.")
+        t.setWordWrap(True)
+        t.setStyleSheet("color:#8ea0a8")
+        self.lcol.addWidget(t)
+        for n, d in self.st["custom"].items():
+            c = QFrame()
+            c.setObjectName("card")
+            hl = QHBoxLayout(c)
+            em = QLabel(d["icon"])
+            em.setStyleSheet("font-size:34px")
+            info = QLabel(f"<b style='font-size:18px'>{n}</b><br><span style='color:#8ea0a8'>{len(d['lessons'])} lessons · {sum(len(x['qs']) for x in d['lessons'])} questions</span>")
+            info.setTextFormat(Qt.RichText)
+            hl.addWidget(em)
+            hl.addWidget(info, 1)
+            for lb, fn in (("EDIT", lambda _, n=n: self.c_edit(n)), ("DELETE", lambda _, n=n: self.c_delete(n))):
+                b = QPushButton(lb)
+                b.setObjectName("act")
+                b.setStyleSheet("padding:8px 16px")
+                b.clicked.connect(fn)
+                hl.addWidget(b)
+            self.lcol.addWidget(c)
+        for lb, fn in (("＋  NEW LANGUAGE", self.c_new), ("✨  ADD AN EXAMPLE (ZORP)", self.c_example)):
+            b = QPushButton(lb)
+            b.setObjectName("act")
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(fn)
+            self.lcol.addWidget(b, 0, Qt.AlignHCenter)
+        self.lcol.addStretch()
+
+    def c_new(self):
+        self.load(None, {"icon": "", "color": COLORS[5][1], "comment": "#", "print": "", "lessons": []})
+
+    def c_edit(self, n):
+        self.load(n, self.st["custom"][n])
+
+    def load(self, name, d):
+        self.orig, self.lessons = name, [dict(x) for x in d["lessons"]]
+        self.nm.setText(name or "")
+        self.ic.setText(d["icon"])
+        self.co.setCurrentIndex(max(0, [c for _, c in COLORS].index(d["color"]) if d["color"] in [c for _, c in COLORS] else 5))
+        self.cm.setCurrentIndex({"#": 0, "//": 1, "--": 2}.get(d.get("comment", "#"), 1))
+        self.pk.setText(d.get("print", ""))
+        self.l_show()
+        self.pg.setCurrentIndex(1)
+
+    def l_show(self):
+        self.ll.clear()
+        self.ll.addItems([f"{i + 1}. {x.get('emoji') or '📘'} {x['title']}  ({len(x['qs'])} questions)" for i, x in enumerate(self.lessons)])
+
+    def e_add(self):
+        dlg = LessonDialog(self)
+        if dlg.exec():
+            self.lessons.append(dlg.data())
+            self.l_show()
+
+    def e_edit(self):
+        r = self.ll.currentRow()
+        if r >= 0:
+            dlg = LessonDialog(self, self.lessons[r])
+            if dlg.exec():
+                self.lessons[r] = dlg.data()
+                self.l_show()
+
+    def e_rem(self):
+        r = self.ll.currentRow()
+        if r >= 0:
+            del self.lessons[r]
+            self.l_show()
+
+    def e_move(self, k):
+        r = self.ll.currentRow()
+        if 0 <= r and 0 <= r + k < len(self.lessons):
+            self.lessons[r], self.lessons[r + k] = self.lessons[r + k], self.lessons[r]
+            self.l_show()
+            self.ll.setCurrentRow(r + k)
+
+    def build(self):
+        n = self.nm.text().strip()
+        if not n:
+            return None, None, "Give your language a name."
+        if n in LANGS and n != self.orig:
+            return None, None, "A language with that name already exists."
+        if not self.lessons:
+            return None, None, "Add at least one lesson."
+        d = {"icon": self.ic.text().strip() or "🧪", "color": COLORS[self.co.currentIndex()][1], "comment": ["#", "//", "--"][self.cm.currentIndex()],
+             "print": self.pk.text().strip(), "lessons": self.lessons}
+        return n, d, None
+
+    def e_save(self):
+        n, d, err = self.build()
+        if err:
+            QMessageBox.warning(self, "Language", err)
+            return
+        if self.orig and self.orig != n:
+            unregister_custom(self.orig)
+            self.st["custom"].pop(self.orig, None)
+            for k in CKEYS:
+                if isinstance(self.st.get(k), dict):
+                    self.st[k].pop(self.orig, None)
+        self.st["custom"][n] = d
+        register_custom(n, d)
+        save(self.st)
+        self.saved.emit()
+        self.refresh()
+        self.pg.setCurrentIndex(0)
+        QMessageBox.information(self, "Language saved", f"{d['icon']} {n} is ready! Pick it from ⇄ Languages.")
+
+    def c_example(self):
+        n = "Zorp"
+        while n in LANGS:
+            n += "!"
+        self.st["custom"][n] = EXAMPLE
+        register_custom(n, EXAMPLE)
+        save(self.st)
+        self.saved.emit()
+        self.refresh()
+
+    def c_delete(self, n):
+        if QMessageBox.question(self, "Delete language", f"Delete {n} and its progress?") != QMessageBox.Yes:
+            return
+        unregister_custom(n)
+        self.st["custom"].pop(n, None)
+        for k in CKEYS:
+            if isinstance(self.st.get(k), dict):
+                self.st[k].pop(n, None)
+        save(self.st)
+        self.saved.emit()
+        self.refresh()
 
 
 class Win(QMainWindow):
@@ -5333,6 +5799,11 @@ class Win(QMainWindow):
         self.setWindowTitle("Codingo")
         self.resize(1340, 780)
         self.st = load()
+        for _n, _d in list(self.st.get("custom", {}).items()):
+            try:
+                register_custom(_n, _d)
+            except Exception:
+                self.st["custom"].pop(_n, None)
         _set_snd(Sound(self.st))
         _set_q(Quest(self.st))
         SND.prepare()
@@ -5387,6 +5858,10 @@ class Win(QMainWindow):
         self.qp.back.connect(lambda: (self.home.refresh(), self.stack.setCurrentIndex(0)))
         self.home.dungeon.connect(self.show_dungeon)
         self.home.quests.connect(self.show_quests)
+        self.cr = Creator(self.st)
+        self.stack.addWidget(self.cr)
+        self.cr.back.connect(lambda: self.stack.setCurrentIndex(2))
+        self.cr.saved.connect(self.langs_changed)
         self.home.extra.connect(self.go_extra)
         self.home.skip.connect(self.go_skip)
         self.home.refresh()
@@ -5421,6 +5896,12 @@ class Win(QMainWindow):
         self.cur = (lang, -300 - i)
         self.les.begin(lang, 0, random.sample(pool, min(4, len(pool))), True, ("✏️", "Extra Practice", "Four quick review questions from what you've learned so far. First time reward: <b>💎 8</b>.", 5))
         self.stack.setCurrentIndex(1)
+
+    def langs_changed(self):
+        self.pick.rebuild()
+        if self.home.lang not in LANGS:
+            self.home.lang = "Python"
+        self.home.refresh()
 
     def show_dungeon(self):
         self.dng.open(self.home.lang)
@@ -5516,6 +5997,10 @@ class Win(QMainWindow):
         self.stack.setCurrentIndex(1)
 
     def choose(self, n):
+        if n == "__new__":
+            self.cr.refresh()
+            self.stack.setCurrentIndex(12)
+            return
         self.home.pick(n)
         self.stack.setCurrentIndex(0)
 
@@ -5608,7 +6093,9 @@ class Win(QMainWindow):
 
 
 if __name__ == "__main__":
+    sys.excepthook = _hook
     app = QApplication(sys.argv)
+    app.aboutToQuit.connect(flush)
     app.setStyleSheet(QSS)
     app.installEventFilter(ClickFilter(app))
     w = Win()
