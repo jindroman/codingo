@@ -2418,6 +2418,115 @@ def unregister_custom(name):
         dct.pop(name, None)
 
 
+def to_text(name, d):
+    inv = {c: n for n, c in COLORS}
+    out = [f"language: {name}", f"icon: {d['icon']}", f"color: {inv.get(d['color'], d['color'])}", f"comment: {d.get('comment', '#')}", f"print: {d.get('print', '')}", ""]
+    for x in d["lessons"]:
+        out += [f"# Lesson: {x['title']}"]
+        if x.get("emoji"):
+            out.append(f"emoji: {x['emoji']}")
+        out += [f"text: {ln}" for ln in x.get("text", "").split("\n")] if x.get("text") else []
+        out += [f"code: {ln}" for ln in x["code"].split("\n")] if x.get("code") else []
+        for q in x["qs"]:
+            out.append(f"? {q[0]}")
+            out += [f"| {ln}" for ln in q[1].split("\n")] if q[1] else []
+            out += [("+ " if i == 0 else "- ") + o for i, o in enumerate(q[2])] if q[2] else ["= " + ", ".join(q[3])]
+        out.append("")
+    return "\n".join(out)
+
+
+def from_text(t):
+    d = {"icon": "🧪", "color": COLORS[5][1], "comment": "#", "print": "", "lessons": []}
+    cm = {n.lower(): c for n, c in COLORS}
+    name, les, cur, err = "", None, None, []
+
+    def val(raw, ch):
+        v = raw.split(ch, 1)[1]
+        return v[1:] if v.startswith(" ") else v
+
+    def end_q():
+        nonlocal cur
+        if cur is None:
+            return
+        p, ok, bad, ans = cur["p"], cur["ok"], cur["bad"], cur["ans"]
+        w = f"line {cur['no']}: question '{p[:30]}'"
+        if not p:
+            err.append(f"line {cur['no']}: empty question")
+        elif ans and (ok or bad):
+            err.append(w + " mixes choices and typed answers")
+        elif ans:
+            les["qs"].append([p, "\n".join(cur["c"]), None, ans])
+        elif len(ok) != 1 or not bad:
+            err.append(w + " needs exactly one '+' correct answer and at least one '-' wrong answer")
+        elif len({x.lower() for x in ok + bad}) != len(ok + bad):
+            err.append(w + " has duplicate answers")
+        else:
+            les["qs"].append([p, "\n".join(cur["c"]), ok + bad, 0])
+        cur = None
+
+    for no, raw in enumerate(t.splitlines(), 1):
+        s = raw.strip()
+        low = s.lower()
+        if not s:
+            continue
+        if les is None and low.startswith(("language:", "icon:", "color:", "comment:", "print:")):
+            k, v = low.split(":", 1)[0], s.split(":", 1)[1].strip()
+            if k == "language":
+                name = v
+            elif k == "icon":
+                d["icon"] = v or "🧪"
+            elif k == "color":
+                d["color"] = cm.get(v.lower(), v if re.fullmatch(r"#[0-9a-fA-F]{6}", v) else d["color"])
+            elif k == "comment":
+                d["comment"] = v if v in ("#", "//", "--") else "#"
+            else:
+                d["print"] = v
+        elif low.startswith("# lesson:"):
+            end_q()
+            les = {"title": s[9:].strip(), "emoji": "", "text": [], "code": [], "qs": [], "no": no}
+            d["lessons"].append(les)
+        elif les is None:
+            err.append(f"line {no}: expected a header (language:, icon:...) or '# Lesson: title'")
+        elif low.startswith("emoji:"):
+            les["emoji"] = s[6:].strip()
+        elif low.startswith("text:"):
+            les["text"].append(val(raw, ":"))
+        elif low.startswith("code:"):
+            les["code"].append(val(raw, ":"))
+        elif s[0] == "?":
+            end_q()
+            cur = {"p": s[1:].strip(), "ok": [], "bad": [], "ans": [], "c": [], "no": no}
+        elif s[0] in "+-=|" and cur is None:
+            err.append(f"line {no}: '{s[0]}' line needs a '? question' above it")
+        elif s[0] == "+":
+            cur["ok"].append(s[1:].strip())
+        elif s[0] == "-":
+            cur["bad"].append(s[1:].strip())
+        elif s[0] == "=":
+            cur["ans"] += [a.strip() for a in s[1:].split(",") if a.strip()]
+        elif s[0] == "|":
+            cur["c"].append(val(raw, "|"))
+        else:
+            err.append(f"line {no}: can't understand '{s[:30]}'")
+    end_q()
+    if not name:
+        err.append("missing 'language: Name' line")
+    elif len(name) > 18:
+        err.append("language name is longer than 18 characters")
+    if not d["lessons"]:
+        err.append("no '# Lesson:' found")
+    if len(d["lessons"]) > 60:
+        err.append("too many lessons (max 60)")
+    for x in d["lessons"]:
+        if not x["title"]:
+            err.append(f"line {x['no']}: lesson without a title")
+        if not x["qs"]:
+            err.append(f"line {x['no']}: lesson '{x['title']}' has no valid questions")
+        x["text"], x["code"] = "\n".join(x["text"]).strip(), "\n".join(x["code"]).rstrip()
+        del x["no"]
+    return name, d, err
+
+
 EXAMPLE = {"icon": "👽", "color": "#a855f7", "comment": "#", "print": "zorp", "lessons": [
     {"title": "Hello, Zorp!", "emoji": "👋", "text": "Zorp is an **alien language**. To print something you use the word zorp followed by text in quotes.\n\nEvery line is one command.",
      "code": "zorp \"Hello, Earth!\"", "qs": [
@@ -5448,6 +5557,55 @@ class Picker(QWidget):
             self.grid.addWidget(b, k // 4, k % 4)
 
 
+class TextDialog(QDialog):
+    def __init__(self, parent, title, text, readonly=False):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumSize(660, 500)
+        v = QVBoxLayout(self)
+        self.ed = QPlainTextEdit()
+        self.ed.setPlainText(text)
+        self.ed.setReadOnly(readonly)
+        self.ed.setLineWrapMode(QPlainTextEdit.NoWrap)
+        v.addWidget(self.ed)
+        row = QHBoxLayout()
+        for lb, fn in (("📋 Copy", self.copy), ("💾 Save file...", self.save_file)) + (() if readonly else (("📂 Open file...", self.open_file),)):
+            b = QPushButton(lb)
+            b.setObjectName("tab")
+            b.clicked.connect(fn)
+            row.addWidget(b)
+        row.addStretch()
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        v.addLayout(row)
+        v.addWidget(bb)
+
+    def value(self):
+        return self.ed.toPlainText()
+
+    def copy(self):
+        QApplication.clipboard().setText(self.value())
+
+    def save_file(self):
+        fn, _ = QFileDialog.getSaveFileName(self, "Save language", "language.txt", "Text (*.txt)")
+        if fn:
+            try:
+                with open(fn, "w", encoding="utf-8") as f:
+                    f.write(self.value())
+            except OSError as e:
+                QMessageBox.warning(self, "Save", str(e))
+
+    def open_file(self):
+        fn, _ = QFileDialog.getOpenFileName(self, "Open language", "", "Text (*.txt)")
+        if fn:
+            try:
+                with open(fn, encoding="utf-8") as f:
+                    self.ed.setPlainText(f.read())
+            except (OSError, UnicodeDecodeError) as e:
+                QMessageBox.warning(self, "Open", str(e))
+
+
 class QuestionDialog(QDialog):
     def __init__(self, parent=None, q=None):
         super().__init__(parent)
@@ -5586,6 +5744,7 @@ class LessonDialog(QDialog):
 class Creator(QWidget):
     back = Signal()
     saved = Signal()
+    preview = Signal(dict, dict)
 
     def __init__(self, st):
         super().__init__()
@@ -5634,7 +5793,7 @@ class Creator(QWidget):
         for w in (self.nm, self.ic, self.co, self.cm, self.pk, QLabel("Lessons (they appear on the roadmap in this order):"), self.ll):
             ev.addWidget(w)
         row = QHBoxLayout()
-        for lb, fn in (("＋ Add lesson", self.e_add), ("✎ Edit", self.e_edit), ("✕ Remove", self.e_rem), ("▲", lambda: self.e_move(-1)), ("▼", lambda: self.e_move(1))):
+        for lb, fn in (("＋ Add lesson", self.e_add), ("✎ Edit", self.e_edit), ("✕ Remove", self.e_rem), ("⧉ Duplicate", self.e_dup), ("▲", lambda: self.e_move(-1)), ("▼", lambda: self.e_move(1)), ("▶ Try lesson", self.e_try)):
             b = QPushButton(lb)
             b.setObjectName("tab")
             b.clicked.connect(fn)
@@ -5677,14 +5836,14 @@ class Creator(QWidget):
             info.setTextFormat(Qt.RichText)
             hl.addWidget(em)
             hl.addWidget(info, 1)
-            for lb, fn in (("EDIT", lambda _, n=n: self.c_edit(n)), ("DELETE", lambda _, n=n: self.c_delete(n))):
+            for lb, fn in (("EDIT", lambda _, n=n: self.c_edit(n)), ("EXPORT", lambda _, n=n: self.c_export(n)), ("DELETE", lambda _, n=n: self.c_delete(n))):
                 b = QPushButton(lb)
                 b.setObjectName("act")
                 b.setStyleSheet("padding:8px 16px")
                 b.clicked.connect(fn)
                 hl.addWidget(b)
             self.lcol.addWidget(c)
-        for lb, fn in (("＋  NEW LANGUAGE", self.c_new), ("✨  ADD AN EXAMPLE (ZORP)", self.c_example)):
+        for lb, fn in (("＋  NEW LANGUAGE", self.c_new), ("📥  IMPORT FROM TEXT", self.c_import), ("✨  ADD AN EXAMPLE (ZORP)", self.c_example)):
             b = QPushButton(lb)
             b.setObjectName("act")
             b.setCursor(Qt.PointingHandCursor)
@@ -5769,6 +5928,44 @@ class Creator(QWidget):
         self.refresh()
         self.pg.setCurrentIndex(0)
         QMessageBox.information(self, "Language saved", f"{d['icon']} {n} is ready! Pick it from ⇄ Languages.")
+
+    def e_dup(self):
+        r = self.ll.currentRow()
+        if r >= 0:
+            x = json.loads(json.dumps(self.lessons[r]))
+            x["title"] += " (copy)"
+            self.lessons.insert(r + 1, x)
+            self.l_show()
+            self.ll.setCurrentRow(r + 1)
+
+    def e_try(self):
+        r = self.ll.currentRow()
+        if r < 0:
+            QMessageBox.information(self, "Try lesson", "Select a lesson in the list first.")
+            return
+        h = {"icon": self.ic.text().strip() or "🧪", "color": COLORS[self.co.currentIndex()][1], "comment": ["#", "//", "--"][self.cm.currentIndex()], "print": self.pk.text().strip()}
+        self.preview.emit(self.lessons[r], h)
+
+    def c_import(self):
+        dlg = TextDialog(self, "Import a language from text (edit this example or paste your own)", to_text("My Language", EXAMPLE))
+        if not dlg.exec():
+            return
+        n, d, err = from_text(dlg.value())
+        if not err and n in LANGS and n not in self.st["custom"]:
+            err = [f"'{n}' is a built-in language, choose another name"]
+        if err:
+            QMessageBox.warning(self, "Import", "\n".join(err[:8]) + ("\n..." if len(err) > 8 else ""))
+            return
+        if n in self.st["custom"] and QMessageBox.question(self, "Import", f"Replace your existing {n}?") != QMessageBox.Yes:
+            return
+        self.st["custom"][n] = d
+        register_custom(n, d)
+        save(self.st)
+        self.saved.emit()
+        self.refresh()
+
+    def c_export(self, n):
+        TextDialog(self, f"Export {n}: copy this text or save it as a file to share", to_text(n, self.st["custom"][n]), True).exec()
 
     def c_example(self):
         n = "Zorp"
@@ -5862,6 +6059,7 @@ class Win(QMainWindow):
         self.stack.addWidget(self.cr)
         self.cr.back.connect(lambda: self.stack.setCurrentIndex(2))
         self.cr.saved.connect(self.langs_changed)
+        self.cr.preview.connect(self.go_preview)
         self.home.extra.connect(self.go_extra)
         self.home.skip.connect(self.go_skip)
         self.home.refresh()
@@ -5895,6 +6093,12 @@ class Win(QMainWindow):
         pool = [q for j in js for q in LANGS[lang][2][j][2]]
         self.cur = (lang, -300 - i)
         self.les.begin(lang, 0, random.sample(pool, min(4, len(pool))), True, ("✏️", "Extra Practice", "Four quick review questions from what you've learned so far. First time reward: <b>💎 8</b>.", 5))
+        self.stack.setCurrentIndex(1)
+
+    def go_preview(self, x, h):
+        register_custom("__preview__", {**h, "lessons": [x]})
+        self.cur = ("__preview__", -9999)
+        self.les.begin("__preview__", 0)
         self.stack.setCurrentIndex(1)
 
     def langs_changed(self):
@@ -6022,6 +6226,10 @@ class Win(QMainWindow):
             self.stack.setCurrentIndex(3)
 
     def fin(self, ok, xp):
+        if self.cur[1] == -9999:
+            unregister_custom("__preview__")
+            self.stack.setCurrentIndex(12)
+            return
         if self.cur[1] <= -500:
             self.keep()
         if ok:
